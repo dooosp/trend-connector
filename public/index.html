@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>trend-connector</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .loading { animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+  </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+  <div class="container mx-auto px-4 py-6 max-w-4xl">
+
+    <!-- Header -->
+    <header class="flex flex-wrap justify-between items-center mb-6 gap-2">
+      <h1 class="text-xl font-bold flex items-center gap-2">
+        <span>🔗</span> trend-connector
+      </h1>
+      <div class="flex gap-2 flex-wrap">
+        <button onclick="showHistory()" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 text-sm">
+          📅 히스토리
+        </button>
+        <button onclick="loadTrends()" class="px-3 py-1 bg-blue-600 rounded hover:bg-blue-500 text-sm">
+          🔄 새로고침
+        </button>
+      </div>
+    </header>
+
+    <!-- Status -->
+    <div id="status" class="mb-4 text-sm text-gray-400"></div>
+
+    <!-- History Panel -->
+    <div id="historyPanel" class="hidden mb-6 bg-gray-800 rounded-lg p-4">
+      <div class="flex justify-between items-center mb-3">
+        <h2 class="font-bold">📅 히스토리</h2>
+        <button onclick="hideHistory()" class="text-gray-400 hover:text-white">&times;</button>
+      </div>
+      <div id="historyList" class="space-y-2 max-h-60 overflow-y-auto"></div>
+    </div>
+
+    <!-- Matches -->
+    <div id="matches" class="space-y-4">
+      <div class="loading text-gray-500 text-center py-8">트렌드 로딩 중...</div>
+    </div>
+
+    <!-- Saved Tab -->
+    <div class="mt-8 border-t border-gray-700 pt-6">
+      <button onclick="toggleSaved()" class="text-gray-400 hover:text-gray-200 flex items-center gap-2">
+        <span>💾</span> 저장된 연결 보기
+        <span id="savedCount" class="bg-gray-700 px-2 py-0.5 rounded text-xs">0</span>
+      </button>
+      <div id="savedList" class="hidden mt-4 space-y-3"></div>
+    </div>
+
+  </div>
+
+  <!-- Preview Modal -->
+  <div id="modal" class="fixed inset-0 bg-black/80 hidden items-center justify-center p-4 z-50" onclick="closeModal(event)">
+    <div class="bg-gray-800 rounded-lg max-w-2xl w-full max-h-[80vh] overflow-auto p-6" onclick="event.stopPropagation()">
+      <div class="flex justify-between items-start mb-4">
+        <h3 id="modalTitle" class="text-lg font-bold pr-4"></h3>
+        <button onclick="closeModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+      </div>
+      <pre id="modalContent" class="whitespace-pre-wrap text-sm text-gray-300 leading-relaxed"></pre>
+    </div>
+  </div>
+
+  <script>
+    let trendsData = [];
+    let currentView = 'today'; // 'today' or date string
+
+    async function loadTrends() {
+      currentView = 'today';
+      const matchesEl = document.getElementById('matches');
+      matchesEl.innerHTML = '<div class="loading text-gray-500 text-center py-8">트렌드 로딩 중...</div>';
+
+      try {
+        const res = await fetch('/api/trends');
+        const data = await res.json();
+
+        if (!data.success) throw new Error(data.error);
+
+        trendsData = data.matches;
+        const newBadge = data.newCount > 0 ? `<span class="text-green-400">(${data.newCount} NEW)</span>` : '';
+        document.getElementById('status').innerHTML =
+          `마지막 업데이트: ${new Date(data.fetchedAt).toLocaleString('ko-KR')} | ${data.matchCount}개 연결됨 ${newBadge}`;
+
+        renderMatches(data.matches);
+        loadSavedConnections();
+      } catch (err) {
+        matchesEl.innerHTML = `<div class="text-red-400 text-center py-8">에러: ${err.message}</div>`;
+      }
+    }
+
+    function renderMatches(matches) {
+      const el = document.getElementById('matches');
+
+      if (matches.length === 0) {
+        el.innerHTML = '<div class="text-gray-500 text-center py-8">연결된 트렌드가 없습니다</div>';
+        return;
+      }
+
+      el.innerHTML = matches.map(m => `
+        <div class="bg-gray-800 rounded-lg p-4 border border-gray-700 ${m.isNew ? 'border-l-4 border-l-green-500' : ''}">
+          <div class="flex justify-between items-start mb-3 flex-wrap gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
+              ${m.isNew ? '<span class="bg-green-600 text-xs px-2 py-0.5 rounded">NEW</span>' : ''}
+              <span class="text-orange-400 text-sm font-medium">🔥 r/${m.subreddit}</span>
+              <span class="text-gray-500 text-xs">score: ${m.score}</span>
+            </div>
+            <button onclick='saveConnection(${JSON.stringify(m).replace(/'/g, "\\'")})'
+                    class="text-sm px-2 py-1 bg-gray-700 rounded hover:bg-gray-600">
+              💾 저장
+            </button>
+          </div>
+
+          <a href="${m.url}" target="_blank" class="text-white hover:text-blue-400 font-medium block mb-3 break-words">
+            ${m.title}
+          </a>
+
+          <div class="mb-3">
+            <div class="text-gray-400 text-sm mb-1">📄 연결된 글:</div>
+            <div class="space-y-1">
+              ${m.linkedFiles.map(f => `
+                <div onclick="showPreview('${f.replace(/'/g, "\\'")}')"
+                     class="text-blue-400 text-sm cursor-pointer hover:underline pl-4 break-all">
+                  • ${f}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <div class="bg-gray-900/50 rounded p-3 text-sm text-gray-300 italic">
+            💭 ${m.reflection}
+          </div>
+
+          ${m.matchedKeywords && m.matchedKeywords.length > 0 ? `
+            <div class="mt-3 flex flex-wrap gap-1">
+              ${m.matchedKeywords.map(k => `
+                <span class="text-xs bg-gray-700 px-2 py-0.5 rounded">#${k}</span>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+      `).join('');
+    }
+
+    async function showHistory() {
+      const panel = document.getElementById('historyPanel');
+      const list = document.getElementById('historyList');
+      panel.classList.remove('hidden');
+
+      try {
+        const res = await fetch('/api/history');
+        const data = await res.json();
+
+        if (data.history.length === 0) {
+          list.innerHTML = '<div class="text-gray-500 text-sm">히스토리가 없습니다</div>';
+          return;
+        }
+
+        list.innerHTML = data.history.map(h => `
+          <div onclick="loadHistoryDate('${h.date}')"
+               class="flex justify-between items-center p-2 bg-gray-700/50 rounded cursor-pointer hover:bg-gray-700">
+            <span class="font-medium">${h.date}</span>
+            <span class="text-sm text-gray-400">
+              ${h.matchCount}개 연결
+              ${h.newCount > 0 ? `<span class="text-green-400">(${h.newCount} NEW)</span>` : ''}
+            </span>
+          </div>
+        `).join('');
+      } catch (err) {
+        list.innerHTML = `<div class="text-red-400 text-sm">에러: ${err.message}</div>`;
+      }
+    }
+
+    function hideHistory() {
+      document.getElementById('historyPanel').classList.add('hidden');
+    }
+
+    async function loadHistoryDate(date) {
+      currentView = date;
+      hideHistory();
+
+      const matchesEl = document.getElementById('matches');
+      matchesEl.innerHTML = '<div class="loading text-gray-500 text-center py-8">로딩 중...</div>';
+
+      try {
+        const res = await fetch(`/api/history/${date}`);
+        const data = await res.json();
+
+        if (!data.success) throw new Error(data.error);
+
+        document.getElementById('status').innerHTML =
+          `📅 ${date} 히스토리 | ${data.matches.length}개 연결됨 <button onclick="loadTrends()" class="text-blue-400 hover:underline ml-2">오늘로 돌아가기</button>`;
+
+        renderMatches(data.matches);
+      } catch (err) {
+        matchesEl.innerHTML = `<div class="text-red-400 text-center py-8">에러: ${err.message}</div>`;
+      }
+    }
+
+    async function showPreview(file) {
+      try {
+        const res = await fetch(`/api/preview?file=${encodeURIComponent(file)}`);
+        const data = await res.json();
+
+        if (!data.success) throw new Error(data.error);
+
+        document.getElementById('modalTitle').textContent = file;
+        document.getElementById('modalContent').textContent = data.preview;
+        document.getElementById('modal').classList.remove('hidden');
+        document.getElementById('modal').classList.add('flex');
+      } catch (err) {
+        alert('미리보기 실패: ' + err.message);
+      }
+    }
+
+    function closeModal(e) {
+      if (!e || e.target.id === 'modal') {
+        document.getElementById('modal').classList.add('hidden');
+        document.getElementById('modal').classList.remove('flex');
+      }
+    }
+
+    async function saveConnection(match) {
+      try {
+        const res = await fetch('/api/connections', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(match)
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('저장되었습니다!');
+          loadSavedConnections();
+        }
+      } catch (err) {
+        alert('저장 실패: ' + err.message);
+      }
+    }
+
+    async function loadSavedConnections() {
+      try {
+        const res = await fetch('/api/connections');
+        const data = await res.json();
+        document.getElementById('savedCount').textContent = data.connections.length;
+
+        const el = document.getElementById('savedList');
+        if (data.connections.length === 0) {
+          el.innerHTML = '<div class="text-gray-500 text-sm">저장된 연결이 없습니다</div>';
+          return;
+        }
+
+        el.innerHTML = data.connections.slice().reverse().map(c => `
+          <div class="bg-gray-800/50 rounded p-3 text-sm">
+            <div class="text-gray-400">${new Date(c.savedAt).toLocaleDateString('ko-KR')}</div>
+            <div class="text-white break-words">${c.title}</div>
+            <div class="text-blue-400 text-xs mt-1 break-all">${c.linkedFiles?.join(', ')}</div>
+          </div>
+        `).join('');
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    function toggleSaved() {
+      const el = document.getElementById('savedList');
+      el.classList.toggle('hidden');
+    }
+
+    // ESC로 모달 닫기
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeModal();
+    });
+
+    // 초기 로드
+    loadTrends();
+  </script>
+</body>
+</html>

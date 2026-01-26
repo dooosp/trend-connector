@@ -1,0 +1,7 @@
+node_modules/
+.env
+logs/*.log
+data/trends.json
+data/seen.json
+data/history/
+data/connections.json
