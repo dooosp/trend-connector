@@ -4,4 +4,3 @@ logs/*.log
 data/ideas.json
 data/usage.json
 data/history/
-data/keywords.json

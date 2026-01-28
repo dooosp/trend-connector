@@ -40,10 +40,53 @@ async function pickDistantNotes() {
 }
 
 /**
- * 조건에 맞는 노트 목록 (500자 이상)
+ * 조건에 맞는 노트 목록
  */
 async function getEligibleNotes() {
   const keywords = loadKeywords();
+  const isCloud = process.env.NODE_ENV === 'production' || !fs.existsSync(config.vaultPath);
+
+  if (isCloud) {
+    return getNotesFromKeywords(keywords);
+  }
+
+  return getNotesFromVault(keywords);
+}
+
+/**
+ * 클라우드 모드: keywords.json에서 노트 목록 추출
+ */
+function getNotesFromKeywords(keywords) {
+  const noteMap = new Map();
+
+  for (const [keyword, files] of Object.entries(keywords)) {
+    for (const filePath of files) {
+      if (!noteMap.has(filePath)) {
+        const folder = path.dirname(filePath);
+        const title = path.basename(filePath, '.md');
+        noteMap.set(filePath, {
+          path: filePath,
+          folder,
+          title,
+          tags: [],
+          keywords: [],
+          summary: `[클라우드 모드] 키워드 기반 노트: ${title}`
+        });
+      }
+      noteMap.get(filePath).keywords.push(keyword);
+    }
+  }
+
+  // 키워드가 3개 이상인 노트만 선택 (충분한 맥락)
+  const eligible = [...noteMap.values()].filter(n => n.keywords.length >= 3);
+  console.log(`[NotePicker] 클라우드 모드: ${eligible.length}개 노트 후보`);
+  return eligible;
+}
+
+/**
+ * 로컬 모드: Vault 스캔
+ */
+function getNotesFromVault(keywords) {
   const files = getAllMarkdownFiles(config.vaultPath);
   const eligible = [];
 
@@ -60,7 +103,7 @@ async function getEligibleNotes() {
     }
   }
 
-  console.log(`[NotePicker] ${eligible.length}개 노트 후보`);
+  console.log(`[NotePicker] 로컬 모드: ${eligible.length}개 노트 후보`);
   return eligible;
 }
 
