@@ -1,36 +1,27 @@
 module.exports = {
   // Obsidian Vault 경로
-  vaultPath: '/mnt/c/Users/wkdxo/OneDrive/문서/Obsidian Vault',
+  vaultPath: process.env.VAULT_PATH || '/mnt/c/Users/wkdxo/OneDrive/문서/Obsidian Vault',
 
   // 서버 포트
-  port: 3000,
+  port: process.env.PORT || 3000,
 
-  // Reddit 서브레딧 목록 (글로벌)
-  subreddits: [
-    // 철학/정체성
-    'philosophy', 'existentialism', 'stoicism',
-    // 자기계발
-    'selfimprovement', 'getdisciplined', 'DecidingToBeBetter',
-    // 심리
-    'psychology', 'mentalhealth', 'mindfulness',
-    // 사회/문화
-    'sociology', 'TrueReddit', 'changemyview',
-    // 기술/AI
-    'technology', 'artificial', 'singularity',
-    // 영화/도서
-    'movies', 'TrueFilm', 'books', 'literature',
-    // 글쓰기
-    'writing', 'Journaling',
-    // 커리어
-    'careerguidance', 'cscareerquestions',
-    // 한국
-    'korea', 'hanguk'
-  ],
+  // Gemini API
+  geminiApiKey: process.env.GEMINI_API_KEY,
+  geminiModel: 'gemini-2.0-flash',
+
+  // 노트 선택 설정
+  minNoteLength: 500,        // 최소 노트 길이 (자)
+  minDistanceScore: 60,      // 최소 이질성 점수
+  maxRetries: 5,             // 이질적 쌍 찾기 최대 시도
+  summaryLength: 1000,       // 노트 요약 길이
+
+  // 일일 제한
+  dailyLimit: 10,
 
   // 캐시 유효 시간 (밀리초)
   cacheExpiry: 60 * 60 * 1000, // 1시간
 
-  // 한글-영어 키워드 매핑
+  // 한글-영어 키워드 매핑 (재사용)
   keywordMapping: {
     '정체성': ['identity', 'self', 'who am i', 'sense of self'],
     '공감': ['empathy', 'understanding', 'compassion', 'emotional intelligence'],
@@ -51,6 +42,8 @@ module.exports = {
     '영화': ['movie', 'film', 'cinema', 'director'],
     '도서': ['book', 'reading', 'literature', 'novel'],
     '글쓰기': ['writing', 'journaling', 'essay', 'blogging'],
-    '노동': ['work', 'labor', 'job', 'career', 'employment']
+    '노동': ['work', 'labor', 'job', 'career', 'employment'],
+    '기술': ['technology', 'tech', 'engineering', 'innovation'],
+    '창의성': ['creativity', 'creative', 'imagination', 'innovation']
   }
 };

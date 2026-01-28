@@ -1,7 +1,7 @@
 {
-  "name": "trend-connector",
-  "version": "1.0.0",
-  "description": "Connect Obsidian notes with Reddit trends for personal reflection",
+  "name": "accidental-genius",
+  "version": "2.0.0",
+  "description": "Generate innovative ideas by combining distant Obsidian notes with AI",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -9,8 +9,6 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "node-cron": "^3.0.3",
-    "snoowrap": "^1.23.0"
+    "express": "^4.18.2"
   }
 }

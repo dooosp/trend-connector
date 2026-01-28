@@ -3,15 +3,16 @@ const fs = require('fs');
 const path = require('path');
 const config = require('./config');
 const { indexVault } = require('./services/obsidian-indexer');
-const { fetchTrends } = require('./services/reddit-fetcher');
-const { matchTrendsWithNotes } = require('./services/matcher');
+const { pickDistantNotes } = require('./services/note-picker');
+const { generateIdea } = require('./services/genius-generator');
 
 const app = express();
-const CONNECTIONS_PATH = path.join(__dirname, 'data/connections.json');
-const HISTORY_DIR = path.join(__dirname, 'data/history');
-const SEEN_PATH = path.join(__dirname, 'data/seen.json');
 
-// 히스토리 폴더 생성
+const IDEAS_PATH = path.join(__dirname, 'data/ideas.json');
+const HISTORY_DIR = path.join(__dirname, 'data/history');
+const USAGE_PATH = path.join(__dirname, 'data/usage.json');
+
+// 폴더 생성
 if (!fs.existsSync(HISTORY_DIR)) {
   fs.mkdirSync(HISTORY_DIR, { recursive: true });
 }
@@ -20,36 +21,41 @@ app.use(express.json());
 app.use(express.static('public'));
 
 /**
- * 메인 API: 트렌드 + 매칭 결과 + 히스토리 저장
+ * 메인 API: 아이디어 생성
  */
-app.get('/api/trends', async (req, res) => {
+app.get('/api/generate', async (req, res) => {
   try {
-    const trends = await fetchTrends();
-    const matches = matchTrendsWithNotes(trends);
-    const seen = loadSeen();
+    // 일일 제한 체크
+    if (isLimitReached()) {
+      return res.status(429).json({
+        success: false,
+        error: `일일 제한 도달 (${config.dailyLimit}회)`
+      });
+    }
 
-    // NEW 표시를 위해 이전에 본 트렌드 체크
-    const matchesWithNew = matches.map(m => ({
-      ...m,
-      isNew: !seen[m.url]
-    }));
+    // 이질적인 노트 쌍 선택
+    const { noteA, noteB, distanceScore } = await pickDistantNotes();
 
-    // 오늘 히스토리 저장
-    saveHistory(matchesWithNew);
+    // Gemini로 아이디어 생성
+    const result = await generateIdea(noteA, noteB, distanceScore);
 
-    // 본 트렌드 기록
-    matches.forEach(m => seen[m.url] = new Date().toISOString());
-    saveSeen(seen);
+    // 아이디어 저장
+    const idea = {
+      id: generateId(),
+      createdAt: new Date().toISOString(),
+      noteA: { path: noteA.path, title: noteA.title, summary: noteA.summary.slice(0, 500) },
+      noteB: { path: noteB.path, title: noteB.title, summary: noteB.summary.slice(0, 500) },
+      distanceScore,
+      result,
+      saved: false
+    };
 
-    res.json({
-      success: true,
-      fetchedAt: trends.fetchedAt,
-      matchCount: matches.length,
-      newCount: matchesWithNew.filter(m => m.isNew).length,
-      matches: matchesWithNew
-    });
+    saveIdea(idea);
+    incrementUsage();
+
+    res.json({ success: true, idea });
   } catch (err) {
-    console.error('[API] /api/trends 에러:', err);
+    console.error('[API] /api/generate 에러:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -59,38 +65,57 @@ app.get('/api/trends', async (req, res) => {
  */
 app.get('/api/history', (req, res) => {
   try {
-    const files = fs.readdirSync(HISTORY_DIR)
-      .filter(f => f.endsWith('.json'))
-      .sort()
-      .reverse();
+    const ideas = loadIdeas();
+    const history = ideas.map(i => ({
+      id: i.id,
+      createdAt: i.createdAt,
+      noteA: i.noteA.title,
+      noteB: i.noteB.title,
+      ideaName: i.result?.businessIdea?.name || '무제',
+      distanceScore: i.distanceScore,
+      saved: i.saved
+    })).reverse();
 
-    const history = files.map(f => {
-      const date = f.replace('.json', '');
-      const data = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR, f), 'utf-8'));
-      return {
-        date,
-        matchCount: data.matches?.length || 0,
-        newCount: data.matches?.filter(m => m.isNew).length || 0
-      };
-    });
-
-    res.json({ success: true, history });
+    res.json({ success: true, history, todayUsage: getTodayUsage() });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
 /**
- * 특정 날짜 히스토리
+ * 특정 아이디어 상세
  */
-app.get('/api/history/:date', (req, res) => {
+app.get('/api/history/:id', (req, res) => {
   try {
-    const filePath = path.join(HISTORY_DIR, `${req.params.date}.json`);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ success: false, error: '히스토리 없음' });
+    const ideas = loadIdeas();
+    const idea = ideas.find(i => i.id === req.params.id);
+
+    if (!idea) {
+      return res.status(404).json({ success: false, error: '아이디어 없음' });
     }
-    const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    res.json({ success: true, ...data });
+
+    res.json({ success: true, idea });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 아이디어 즐겨찾기 토글
+ */
+app.post('/api/save/:id', (req, res) => {
+  try {
+    const ideas = loadIdeas();
+    const idea = ideas.find(i => i.id === req.params.id);
+
+    if (!idea) {
+      return res.status(404).json({ success: false, error: '아이디어 없음' });
+    }
+
+    idea.saved = !idea.saved;
+    saveIdeas(ideas);
+
+    res.json({ success: true, saved: idea.saved });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -109,47 +134,17 @@ app.post('/api/reindex', async (req, res) => {
 });
 
 /**
- * 연결 저장
- */
-app.post('/api/connections', (req, res) => {
-  try {
-    const connection = {
-      ...req.body,
-      savedAt: new Date().toISOString()
-    };
-
-    const connections = loadConnections();
-    connections.push(connection);
-    saveConnections(connections);
-
-    res.json({ success: true, connection });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-/**
- * 저장된 연결 목록
- */
-app.get('/api/connections', (req, res) => {
-  const connections = loadConnections();
-  res.json({ success: true, connections });
-});
-
-/**
- * 글 내용 보기
+ * 노트 원문 미리보기
  */
 app.get('/api/preview', (req, res) => {
   try {
     const filePath = req.query.file;
     const fullPath = path.join(config.vaultPath, filePath);
 
-    // 클라우드 환경 체크
     if (process.env.NODE_ENV === 'production') {
       return res.json({
         success: true,
-        preview: `[클라우드 환경]\n\n파일: ${filePath}\n\n옵시디언 원본은 로컬에서만 확인 가능합니다.`,
-        fullLength: 0,
+        preview: `[클라우드 환경]\n\n파일: ${filePath}\n\n원본은 로컬에서만 확인 가능합니다.`,
         isCloud: true
       });
     }
@@ -159,51 +154,78 @@ app.get('/api/preview', (req, res) => {
     }
 
     const content = fs.readFileSync(fullPath, 'utf-8');
-    res.json({ success: true, preview: content, fullLength: content.length });
+    res.json({ success: true, preview: content });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
+/**
+ * 사용량 정보
+ */
+app.get('/api/usage', (req, res) => {
+  res.json({
+    success: true,
+    todayUsage: getTodayUsage(),
+    dailyLimit: config.dailyLimit
+  });
+});
+
 // Helper functions
-function loadConnections() {
-  if (!fs.existsSync(CONNECTIONS_PATH)) return [];
-  return JSON.parse(fs.readFileSync(CONNECTIONS_PATH, 'utf-8'));
+function loadIdeas() {
+  if (!fs.existsSync(IDEAS_PATH)) return [];
+  return JSON.parse(fs.readFileSync(IDEAS_PATH, 'utf-8'));
 }
 
-function saveConnections(connections) {
-  fs.writeFileSync(CONNECTIONS_PATH, JSON.stringify(connections, null, 2), 'utf-8');
+function saveIdeas(ideas) {
+  fs.writeFileSync(IDEAS_PATH, JSON.stringify(ideas, null, 2), 'utf-8');
 }
 
-function loadSeen() {
-  if (!fs.existsSync(SEEN_PATH)) return {};
-  return JSON.parse(fs.readFileSync(SEEN_PATH, 'utf-8'));
+function saveIdea(idea) {
+  const ideas = loadIdeas();
+  ideas.push(idea);
+  saveIdeas(ideas);
 }
 
-function saveSeen(seen) {
-  fs.writeFileSync(SEEN_PATH, JSON.stringify(seen, null, 2), 'utf-8');
+function loadUsage() {
+  if (!fs.existsSync(USAGE_PATH)) return {};
+  return JSON.parse(fs.readFileSync(USAGE_PATH, 'utf-8'));
 }
 
-function saveHistory(matches) {
+function saveUsage(usage) {
+  fs.writeFileSync(USAGE_PATH, JSON.stringify(usage, null, 2), 'utf-8');
+}
+
+function getTodayUsage() {
   const today = new Date().toISOString().split('T')[0];
-  const filePath = path.join(HISTORY_DIR, `${today}.json`);
-  const data = {
-    date: today,
-    savedAt: new Date().toISOString(),
-    matches: matches
-  };
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  const usage = loadUsage();
+  return usage[today] || 0;
+}
+
+function incrementUsage() {
+  const today = new Date().toISOString().split('T')[0];
+  const usage = loadUsage();
+  usage[today] = (usage[today] || 0) + 1;
+  saveUsage(usage);
+}
+
+function isLimitReached() {
+  return getTodayUsage() >= config.dailyLimit;
+}
+
+function generateId() {
+  return 'idea_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
 }
 
 // 서버 시작
 const PORT = process.env.PORT || config.port;
 app.listen(PORT, () => {
   console.log(`
-  ╔═══════════════════════════════════════╗
-  ║       🔗 trend-connector 실행중       ║
-  ║                                       ║
-  ║   http://localhost:${PORT}               ║
-  ║                                       ║
-  ╚═══════════════════════════════════════╝
+  ╔═══════════════════════════════════════════╗
+  ║    🧠 Accidental Genius Generator 실행중   ║
+  ║                                           ║
+  ║       http://localhost:${PORT}                ║
+  ║                                           ║
+  ╚═══════════════════════════════════════════╝
   `);
 });

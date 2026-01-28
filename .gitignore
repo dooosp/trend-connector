@@ -1,7 +1,7 @@
 node_modules/
 .env
 logs/*.log
-data/trends.json
-data/seen.json
+data/ideas.json
+data/usage.json
 data/history/
-data/connections.json
+data/keywords.json
